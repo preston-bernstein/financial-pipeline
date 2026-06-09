@@ -1,9 +1,6 @@
 FROM node:24-alpine AS builder
 WORKDIR /app
 
-# better-sqlite3 requires native compilation
-RUN apk add --no-cache python3 make g++
-
 COPY package.json package-lock.json ./
 COPY packages/db/package.json ./packages/db/
 COPY packages/adapter-utils/package.json ./packages/adapter-utils/

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { sql } from 'drizzle-orm';
 import { Cron } from 'croner';
 import { withRunRecord, createLogger } from '@financial-pipeline/adapter-utils';
@@ -20,12 +20,12 @@ interface FungibleRow {
 
 async function run(): Promise<void> {
   await withRunRecord('fungible', async () => {
-    const fungible = new Database(process.env.FUNGIBLE_DB_PATH!, { readonly: true });
+    const fungible = new DatabaseSync(process.env.FUNGIBLE_DB_PATH!, { open: true });
     let rowsWritten = 0;
 
     try {
       // rolling 90-day window; upsert so manual_category / display_name edits in Fungible stay current
-      const rows = fungible.prepare<[], FungibleRow>(`
+      const rows = fungible.prepare(`
         SELECT
           t.id,
           t.account_id,
@@ -39,10 +39,9 @@ async function run(): Promise<void> {
         WHERE t.ignored = 0
           AND t.date >= date('now', '-90 days')
         ORDER BY t.date DESC
-      `).all();
+      `).all() as FungibleRow[];
 
       log.info({ count: rows.length }, 'fetched from fungible');
-
       if (rows.length === 0) return { rowsWritten: 0 };
 
       const canonical = rows.map((r) => ({
@@ -59,7 +58,7 @@ async function run(): Promise<void> {
         source: 'plaid' as const,
       }));
 
-      // batch upsert in chunks of 500 to avoid SQLite/Postgres parameter limits
+      // batch in chunks of 500 to stay within Postgres parameter limits
       const CHUNK = 500;
       for (let i = 0; i < canonical.length; i += CHUNK) {
         await db

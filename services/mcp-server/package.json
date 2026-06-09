@@ -9,10 +9,12 @@
   },
   "dependencies": {
     "@financial-pipeline/db": "*",
+    "@financial-pipeline/adapter-utils": "*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "dotenv": "^16.0.0",
     "pino": "^9.0.0",
-    "smol-toml": "^1.0.0"
+    "smol-toml": "^1.0.0",
+    "zod": "^3.0.0"
   },
   "devDependencies": {
     "tsx": "^4.0.0",

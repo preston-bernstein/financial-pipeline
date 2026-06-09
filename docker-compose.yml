@@ -179,13 +179,6 @@ services:
     volumes:
       - ntfy_data:/var/lib/ntfy
 
-  mcpo:
-    image: ghcr.io/open-webui/mcpo:main
-    platform: linux/amd64
-    environment:
-      MCP_SERVER_URL: http://mcp-server:${MCP_PORT}
-    depends_on:
-      - mcp-server
 
 volumes:
   postgres_data:

@@ -31,22 +31,20 @@ services:
         condition: service_healthy
     restart: "no"
 
-  fungible-tap:
-    image: financial-pipeline/fungible-tap
+  plaid-tap:
+    image: financial-pipeline/plaid-tap
     build:
       context: .
-      dockerfile: services/fungible-tap/Dockerfile
+      dockerfile: services/plaid-tap/Dockerfile
       platforms: ["linux/amd64"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      FUNGIBLE_DB_PATH: ${FUNGIBLE_DB_PATH}
       LOKI_URL: ${LOKI_URL}
-      NTFY_URL: ${NTFY_URL}
-      NTFY_TOPIC: ${NTFY_TOPIC}
     volumes:
-      - ${FUNGIBLE_DB_HOST_DIR}:/fungible-data:ro
+      - plaid_cursors:/data
     secrets:
       - postgres_password
+      - plaid_credentials
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -191,6 +189,7 @@ services:
 
 volumes:
   postgres_data:
+  plaid_cursors:
   betterment_session:
   vanguard_session:
   fidelity_session:
@@ -203,6 +202,8 @@ secrets:
     file: ./secrets/postgres_password.txt
   grafana_password:
     file: ./secrets/grafana_password.txt
+  plaid_credentials:
+    file: ./secrets/plaid_credentials.json
   betterment_credentials:
     file: ./secrets/betterment_credentials.json
   vanguard_credentials:

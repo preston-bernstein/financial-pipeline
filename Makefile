@@ -4,7 +4,7 @@ NAS_PATH ?= YOUR_NAS_PATH
 DOCKER   ?= /usr/local/bin/docker
 PLATFORM  = linux/amd64
 
-SERVICES = fungible-tap betterment-adapter vanguard-adapter fidelity-adapter materializer mcp-server
+SERVICES = plaid-tap betterment-adapter vanguard-adapter fidelity-adapter materializer mcp-server
 DB_PKG   = packages/db
 
 .PHONY: build push deploy typecheck

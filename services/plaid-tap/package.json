@@ -1,0 +1,23 @@
+{
+  "name": "@financial-pipeline/plaid-tap",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@financial-pipeline/db": "*",
+    "@financial-pipeline/adapter-utils": "*",
+    "croner": "^9.0.0",
+    "dotenv": "^16.0.0",
+    "plaid": "^29.0.0",
+    "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

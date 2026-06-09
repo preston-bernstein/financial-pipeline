@@ -1,7 +1,7 @@
 FROM node:24-alpine AS builder
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/db/package.json ./packages/db/
 COPY packages/adapter-utils/package.json ./packages/adapter-utils/
 COPY services/mcp-server/package.json ./services/mcp-server/

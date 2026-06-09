@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/playwright:noble AS builder
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/db/package.json ./packages/db/
 COPY packages/adapter-utils/package.json ./packages/adapter-utils/
 COPY services/vanguard-adapter/package.json ./services/vanguard-adapter/

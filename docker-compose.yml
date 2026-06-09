@@ -42,7 +42,7 @@ services:
       NTFY_URL: ${NTFY_URL}
       NTFY_TOPIC: ${NTFY_TOPIC}
     volumes:
-      - fungible_data:/fungible-data:ro
+      - ${FUNGIBLE_DB_HOST_DIR}:/fungible-data:ro
     secrets:
       - postgres_password
     depends_on:
@@ -187,7 +187,6 @@ volumes:
   betterment_session:
   vanguard_session:
   fidelity_session:
-  fungible_data:
   loki_data:
   grafana_data:
   ntfy_data:

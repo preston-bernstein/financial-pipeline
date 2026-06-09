@@ -1,0 +1,205 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    platform: linux/amd64
+    environment:
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: pipeline
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    secrets:
+      - postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: packages/db/Dockerfile
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    secrets:
+      - postgres_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  fungible-tap:
+    build:
+      context: .
+      dockerfile: services/fungible-tap/Dockerfile
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      FUNGIBLE_DB_PATH: ${FUNGIBLE_DB_PATH}
+      LOKI_URL: ${LOKI_URL}
+      NTFY_URL: ${NTFY_URL}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+    volumes:
+      - fungible_data:/fungible-data:ro
+    secrets:
+      - postgres_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  betterment-adapter:
+    build:
+      context: .
+      dockerfile: services/betterment-adapter/Dockerfile
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      LOKI_URL: ${LOKI_URL}
+      NTFY_URL: ${NTFY_URL}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+    volumes:
+      - betterment_session:/session
+    secrets:
+      - postgres_password
+      - betterment_credentials
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  vanguard-adapter:
+    build:
+      context: .
+      dockerfile: services/vanguard-adapter/Dockerfile
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      LOKI_URL: ${LOKI_URL}
+      NTFY_URL: ${NTFY_URL}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+    volumes:
+      - vanguard_session:/session
+    secrets:
+      - postgres_password
+      - vanguard_credentials
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  fidelity-adapter:
+    build:
+      context: .
+      dockerfile: services/fidelity-adapter/Dockerfile
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      LOKI_URL: ${LOKI_URL}
+      NTFY_URL: ${NTFY_URL}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+    volumes:
+      - fidelity_session:/session
+    secrets:
+      - postgres_password
+      - fidelity_credentials
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  materializer:
+    build:
+      context: .
+      dockerfile: services/materializer/Dockerfile
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      LOKI_URL: ${LOKI_URL}
+    secrets:
+      - postgres_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: services/mcp-server/Dockerfile
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      MCP_PORT: ${MCP_PORT}
+      LOKI_URL: ${LOKI_URL}
+    ports:
+      - "${MCP_PORT}:${MCP_PORT}"
+    volumes:
+      - ./pipeline.config.toml:/config/pipeline.config.toml:ro
+    secrets:
+      - postgres_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  loki:
+    image: grafana/loki:3.0.0
+    platform: linux/amd64
+    volumes:
+      - loki_data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    platform: linux/amd64
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    secrets:
+      - grafana_password
+    depends_on:
+      loki:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    platform: linux/amd64
+    command: serve
+    volumes:
+      - ntfy_data:/var/lib/ntfy
+
+  mcpo:
+    image: ghcr.io/open-webui/mcpo:main
+    platform: linux/amd64
+    environment:
+      MCP_SERVER_URL: http://mcp-server:${MCP_PORT}
+    depends_on:
+      - mcp-server
+
+volumes:
+  postgres_data:
+  betterment_session:
+  vanguard_session:
+  fidelity_session:
+  fungible_data:
+  loki_data:
+  grafana_data:
+  ntfy_data:
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  grafana_password:
+    file: ./secrets/grafana_password.txt
+  betterment_credentials:
+    file: ./secrets/betterment_credentials.json
+  vanguard_credentials:
+    file: ./secrets/vanguard_credentials.json
+  fidelity_credentials:
+    file: ./secrets/fidelity_credentials.json

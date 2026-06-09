@@ -1,0 +1,26 @@
+# Domain config — copy to pipeline.config.toml and fill in real values
+# Infrastructure config lives in .env (see .env.example)
+
+[income]
+monthly_net = 0  # monthly take-home after taxes and pre-tax deductions
+
+[savings]
+roth_monthly = 0        # Fidelity Roth IRA FZROX auto-invest
+betterment_monthly = 0  # total monthly transfers to Betterment goals
+# 401k is pre-tax — already excluded from monthly_net above
+
+[staleness]
+plaid_hours = 8       # alert if Plaid/Fungible tap hasn't run in this many hours
+betterment_hours = 48
+vanguard_hours = 48
+fidelity_hours = 48
+
+[alerts]
+# ntfy topic per severity — set to empty string to disable
+critical_topic = "financial-pipeline-critical"
+warning_topic = "financial-pipeline-warning"
+
+[alerts.email]
+# Grafana alert email config (set in Grafana UI; this is for reference)
+enabled = false
+to = ""

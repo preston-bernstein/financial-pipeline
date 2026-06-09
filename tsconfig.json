@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/db" },
+    { "path": "./packages/adapter-utils" },
+    { "path": "./services/betterment-adapter" },
+    { "path": "./services/vanguard-adapter" },
+    { "path": "./services/fidelity-adapter" },
+    { "path": "./services/fungible-tap" },
+    { "path": "./services/materializer" },
+    { "path": "./services/mcp-server" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@financial-pipeline/materializer",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@financial-pipeline/db": "*",
+    "@financial-pipeline/adapter-utils": "*",
+    "dotenv": "^16.0.0",
+    "pino": "^9.0.0",
+    "postgres": "^3.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

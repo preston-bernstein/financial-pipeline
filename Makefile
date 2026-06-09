@@ -1,6 +1,7 @@
 NAS_HOST ?= YOUR_NAS_IP
 NAS_USER ?= YOUR_NAS_USER
-NAS_PATH ?= ~/financial-pipeline
+NAS_PATH ?= YOUR_NAS_PATH
+DOCKER   ?= /usr/local/bin/docker
 PLATFORM  = linux/amd64
 
 SERVICES = fungible-tap betterment-adapter vanguard-adapter fidelity-adapter materializer mcp-server
@@ -17,10 +18,10 @@ build:
 push: build
 	@echo "Transferring images to NAS..."
 	docker save financial-pipeline/migrate $(addprefix financial-pipeline/,$(SERVICES)) \
-		| ssh $(NAS_USER)@$(NAS_HOST) docker load
+		| ssh $(NAS_USER)@$(NAS_HOST) $(DOCKER) load
 
 deploy: push
-	ssh $(NAS_USER)@$(NAS_HOST) "cd $(NAS_PATH) && docker compose up -d"
+	ssh $(NAS_USER)@$(NAS_HOST) "cd $(NAS_PATH) && $(DOCKER) compose up -d"
 
 typecheck:
 	npx tsc --noEmit

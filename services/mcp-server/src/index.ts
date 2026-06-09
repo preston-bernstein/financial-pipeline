@@ -14,7 +14,9 @@ import { getFinancialSnapshot } from './tools/get-financial-snapshot.js';
 const log = createLogger('mcp-server');
 const PORT = Number(process.env.MCP_PORT ?? 3101);
 
-const server = new McpServer({ name: 'financial-pipeline', version: '0.0.1' });
+// cast avoids TS2589 — McpServer accumulates deep generics per registered tool
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const server = new McpServer({ name: 'financial-pipeline', version: '0.0.1' }) as any;
 
 server.tool(
   'get_monthly_spending',

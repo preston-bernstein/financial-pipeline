@@ -18,7 +18,9 @@ RUN npm run build --workspace=@financial-pipeline/vanguard-adapter
 FROM mcr.microsoft.com/playwright:noble
 WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/db/package.json ./packages/db/package.json
 COPY --from=builder /app/packages/db/dist ./packages/db/dist
+COPY --from=builder /app/packages/adapter-utils/package.json ./packages/adapter-utils/package.json
 COPY --from=builder /app/packages/adapter-utils/dist ./packages/adapter-utils/dist
 COPY --from=builder /app/services/vanguard-adapter/dist ./services/vanguard-adapter/dist
 

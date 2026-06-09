@@ -39,7 +39,7 @@ async function run(): Promise<void> {
         WHERE t.ignored = 0
           AND t.date >= date('now', '-90 days')
         ORDER BY t.date DESC
-      `).all() as FungibleRow[];
+      `).all() as unknown as FungibleRow[];
 
       log.info({ count: rows.length }, 'fetched from fungible');
       if (rows.length === 0) return { rowsWritten: 0 };

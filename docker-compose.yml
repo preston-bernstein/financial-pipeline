@@ -17,6 +17,7 @@ services:
       retries: 10
 
   migrate:
+    image: financial-pipeline/migrate
     build:
       context: .
       dockerfile: packages/db/Dockerfile
@@ -31,6 +32,7 @@ services:
     restart: "no"
 
   fungible-tap:
+    image: financial-pipeline/fungible-tap
     build:
       context: .
       dockerfile: services/fungible-tap/Dockerfile
@@ -50,6 +52,7 @@ services:
         condition: service_completed_successfully
 
   betterment-adapter:
+    image: financial-pipeline/betterment-adapter
     build:
       context: .
       dockerfile: services/betterment-adapter/Dockerfile
@@ -69,6 +72,7 @@ services:
         condition: service_completed_successfully
 
   vanguard-adapter:
+    image: financial-pipeline/vanguard-adapter
     build:
       context: .
       dockerfile: services/vanguard-adapter/Dockerfile
@@ -88,6 +92,7 @@ services:
         condition: service_completed_successfully
 
   fidelity-adapter:
+    image: financial-pipeline/fidelity-adapter
     build:
       context: .
       dockerfile: services/fidelity-adapter/Dockerfile
@@ -107,6 +112,7 @@ services:
         condition: service_completed_successfully
 
   materializer:
+    image: financial-pipeline/materializer
     build:
       context: .
       dockerfile: services/materializer/Dockerfile
@@ -121,6 +127,7 @@ services:
         condition: service_completed_successfully
 
   mcp-server:
+    image: financial-pipeline/mcp-server
     build:
       context: .
       dockerfile: services/mcp-server/Dockerfile

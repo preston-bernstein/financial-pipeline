@@ -17,6 +17,7 @@ RUN npm run build --workspace=@financial-pipeline/betterment-adapter
 
 FROM mcr.microsoft.com/playwright:noble
 WORKDIR /app
+COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/db/package.json ./packages/db/package.json
 COPY --from=builder /app/packages/db/dist ./packages/db/dist

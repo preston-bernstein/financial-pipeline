@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { Cron } from 'croner';
-import { withRunRecord, launchBrowserWithSession, createLogger } from '@financial-pipeline/adapter-utils';
+import { withRunRecord, createLogger } from '@financial-pipeline/adapter-utils';
+import { launchBrowserWithSession } from './browser.js';
 
 const log = createLogger('fidelity-adapter');
 const SESSION_PATH = '/session/fidelity.storageState.json';

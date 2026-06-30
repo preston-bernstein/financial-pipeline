@@ -1,69 +1,121 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { enrichBatch, PROMPT_VERSION } from './enrich.js';
+import { enrichBatch, PROMPT_VERSION_L1, PROMPT_VERSION_L2 } from './enrich.js';
 
 const BROKER = 'http://broker:11436';
-const MODEL = 'llama3.2:3b';
+const MODELS = { l1: 'llama3.2:3b', l2: 'llama3.1:8b' };
 
-beforeEach(() => {
-  vi.restoreAllMocks();
-});
+beforeEach(() => vi.restoreAllMocks());
 
-function mockFetch(response: string) {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({ response }),
+function mockFetch(...responses: string[]) {
+  let call = 0;
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+    const response = responses[call++] ?? responses[responses.length - 1]!;
+    return Promise.resolve({ ok: true, json: async () => ({ response }) });
   }));
 }
 
-describe('enrichBatch', () => {
-  it('maps valid categories from LLM response', async () => {
-    mockFetch('[{"id":1,"category":"groceries"},{"id":2,"category":"restaurants"}]');
-    const txs = [
-      { id: 'tx1', description: 'KROGER', merchant_name: 'Kroger', amount: '45.00', category: null },
-      { id: 'tx2', description: 'CHIPOTLE', merchant_name: 'Chipotle', amount: '15.00', category: null },
-    ];
-    const result = await enrichBatch(txs, BROKER, MODEL);
+function mockFetchError() {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+}
+
+const TX_KROGER = { id: 'tx1', description: 'KROGER', merchant_name: 'Kroger', amount: '45.00', category: null };
+const TX_CHIPOTLE = { id: 'tx2', description: 'CHIPOTLE', merchant_name: 'Chipotle', amount: '15.00', category: null };
+const TX_WEIRD = { id: 'tx3', description: 'XYZ HOLDINGS 8372', merchant_name: null, amount: '200.00', category: null };
+
+describe('enrichBatch — cascade behaviour', () => {
+  it('accepts L1 high-confidence results without calling L2', async () => {
+    mockFetch('[{"id":1,"category":"groceries","conf":"high"},{"id":2,"category":"restaurants","conf":"high"}]');
+    const result = await enrichBatch([TX_KROGER, TX_CHIPOTLE], BROKER, MODELS);
+
+    expect(fetch).toHaveBeenCalledTimes(1); // only L1 batch
     expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({ id: 'tx1', llm_category: 'groceries' });
-    expect(result[1]).toEqual({ id: 'tx2', llm_category: 'restaurants' });
+    expect(result[0]).toMatchObject({ id: 'tx1', llm_category: 'groceries', llm_model: MODELS.l1, prompt_version: PROMPT_VERSION_L1 });
+    expect(result[1]).toMatchObject({ id: 'tx2', llm_category: 'restaurants', llm_model: MODELS.l1, prompt_version: PROMPT_VERSION_L1 });
   });
 
-  it('falls back to other for unknown categories', async () => {
-    mockFetch('[{"id":1,"category":"food_and_dining"}]');
-    const txs = [
-      { id: 'tx1', description: 'RANDOM', merchant_name: null, amount: '10.00', category: null },
-    ];
-    const result = await enrichBatch(txs, BROKER, MODEL);
-    expect(result[0]!.llm_category).toBe('other');
+  it('escalates low-confidence L1 results to L2', async () => {
+    // L1 returns low conf for tx3; L2 classifies it
+    mockFetch(
+      '[{"id":1,"category":"other","conf":"low"}]',         // L1 response
+      '{"category":"transfers"}',                            // L2 response for tx3
+    );
+    const result = await enrichBatch([TX_WEIRD], BROKER, MODELS);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result[0]).toMatchObject({ id: 'tx3', llm_category: 'transfers', llm_model: MODELS.l2, prompt_version: PROMPT_VERSION_L2 });
   });
 
-  it('returns empty array when broker errors', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
-    const txs = [
-      { id: 'tx1', description: 'AMAZON', merchant_name: 'Amazon', amount: '29.99', category: null },
-    ];
-    const result = await enrichBatch(txs, BROKER, MODEL);
-    expect(result).toHaveLength(0);
+  it('escalates med-confidence results to L2', async () => {
+    mockFetch(
+      '[{"id":1,"category":"groceries","conf":"med"}]',
+      '{"category":"shopping"}',
+    );
+    const result = await enrichBatch([TX_KROGER], BROKER, MODELS);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result[0]).toMatchObject({ llm_category: 'shopping', prompt_version: PROMPT_VERSION_L2 });
   });
 
-  it('returns empty array when response is unparseable', async () => {
-    mockFetch('Sorry, I cannot classify these transactions.');
-    const txs = [
-      { id: 'tx1', description: 'WALMART', merchant_name: 'Walmart', amount: '60.00', category: null },
-    ];
-    const result = await enrichBatch(txs, BROKER, MODEL);
-    expect(result).toHaveLength(0);
+  it('escalates high-conf "other" to L2', async () => {
+    // High confidence "other" still gets a second look
+    mockFetch(
+      '[{"id":1,"category":"other","conf":"high"}]',
+      '{"category":"entertainment"}',
+    );
+    const result = await enrichBatch([TX_WEIRD], BROKER, MODELS);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result[0]).toMatchObject({ llm_category: 'entertainment', prompt_version: PROMPT_VERSION_L2 });
   });
 
-  it('handles empty input', async () => {
-    const result = await enrichBatch([], BROKER, MODEL);
+  it('mixed batch: some accepted at L1, some escalated to L2', async () => {
+    mockFetch(
+      '[{"id":1,"category":"groceries","conf":"high"},{"id":2,"category":"other","conf":"low"}]',
+      '{"category":"transfers"}', // L2 for tx2
+    );
+    const result = await enrichBatch([TX_KROGER, TX_CHIPOTLE], BROKER, MODELS);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const groceries = result.find(r => r.id === 'tx1')!;
+    const transfers = result.find(r => r.id === 'tx2')!;
+    expect(groceries).toMatchObject({ llm_category: 'groceries', prompt_version: PROMPT_VERSION_L1 });
+    expect(transfers).toMatchObject({ llm_category: 'transfers', prompt_version: PROMPT_VERSION_L2 });
+  });
+
+  it('falls back to "other" when L2 broker errors', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '[{"id":1,"category":"other","conf":"low"}]' }) })
+      .mockResolvedValueOnce({ ok: false, status: 503 }),
+    );
+    const result = await enrichBatch([TX_WEIRD], BROKER, MODELS);
+    expect(result[0]).toMatchObject({ llm_category: 'other', prompt_version: PROMPT_VERSION_L2 });
+  });
+
+  it('escalates tx missing from L1 response entirely', async () => {
+    // L1 only returns result for tx1, tx2 missing → escalate tx2
+    mockFetch(
+      '[{"id":1,"category":"groceries","conf":"high"}]', // tx2 absent
+      '{"category":"restaurants"}',                       // L2 for tx2
+    );
+    const result = await enrichBatch([TX_KROGER, TX_CHIPOTLE], BROKER, MODELS);
+    const chipotle = result.find(r => r.id === 'tx2')!;
+    expect(chipotle).toMatchObject({ llm_category: 'restaurants', prompt_version: PROMPT_VERSION_L2 });
+  });
+
+  it('returns empty array for empty input without calling broker', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const result = await enrichBatch([], BROKER, MODELS);
     expect(result).toHaveLength(0);
     expect(fetch).not.toHaveBeenCalled();
   });
-});
 
-describe('PROMPT_VERSION', () => {
-  it('is defined and non-empty', () => {
-    expect(PROMPT_VERSION).toBeTruthy();
+  it('returns empty when L1 broker is down and L2 called for all txs', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503 }) // L1 fails
+      .mockResolvedValue({ ok: true, json: async () => ({ response: '{"category":"groceries"}' }) }), // L2 ok
+    );
+    const result = await enrichBatch([TX_KROGER], BROKER, MODELS);
+    // L1 got no results → all txs escalate to L2
+    expect(result[0]).toMatchObject({ llm_category: 'groceries', prompt_version: PROMPT_VERSION_L2 });
   });
 });

@@ -138,6 +138,7 @@ services:
       NTFY_TOPIC: ${NTFY_TOPIC}
       OLLAMA_BROKER_URL: ${OLLAMA_BROKER_URL}
       ENRICHER_MODEL: ${ENRICHER_MODEL:-llama3.2:3b}
+      ENRICHER_MODEL_L2: ${ENRICHER_MODEL_L2:-llama3.1:8b}
     secrets:
       - postgres_password
     depends_on:

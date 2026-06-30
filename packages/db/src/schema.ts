@@ -8,6 +8,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from 'drizzle-orm/pg-core';
 
@@ -23,6 +24,9 @@ export const transactions = pgTable('transactions', {
   pending: boolean('pending').notNull().default(false),
   source: varchar('source').notNull().default('plaid'),
   ingested_at: timestamp('ingested_at').notNull().defaultNow(),
+  llm_category: varchar('llm_category'),
+  llm_model: varchar('llm_model'),
+  prompt_version: varchar('prompt_version'),
 });
 
 export const snapshots = pgTable('snapshots', {
@@ -62,4 +66,14 @@ export const monthly_spending = pgTable('monthly_spending', {
   total: numeric('total', { precision: 12, scale: 2 }).notNull(),
   by_category: jsonb('by_category'),
   computed_at: timestamp('computed_at').notNull().defaultNow(),
+}, (t) => ({
+  yearMonthUnique: uniqueIndex('monthly_spending_year_month_unique').on(t.year, t.month),
+}));
+
+export const journal_entries = pgTable('journal_entries', {
+  id: serial('id').primaryKey(),
+  month_key: varchar('month_key').notNull().unique(),
+  content: text('content').notNull(),
+  model: varchar('model').notNull(),
+  generated_at: timestamp('generated_at').notNull().defaultNow(),
 });

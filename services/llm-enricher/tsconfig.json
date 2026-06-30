@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "paths": {
+      "@financial-pipeline/db": ["../../packages/db/src/index.ts"],
+      "@financial-pipeline/adapter-utils": ["../../packages/adapter-utils/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

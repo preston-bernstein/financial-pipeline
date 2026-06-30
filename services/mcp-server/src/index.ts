@@ -10,6 +10,7 @@ import { getGoalProgress } from './tools/get-goal-progress.js';
 import { getDerivedCeiling } from './tools/get-derived-ceiling.js';
 import { getAdapterHealth } from './tools/get-adapter-health.js';
 import { getFinancialSnapshot } from './tools/get-financial-snapshot.js';
+import { readFinancialJournal } from './tools/read-financial-journal.js';
 
 const log = createLogger('mcp-server');
 const PORT = Number(process.env.MCP_PORT ?? 3101);
@@ -22,7 +23,7 @@ server.tool(
   'get_monthly_spending',
   'Monthly spending totals, optionally filtered by year and month',
   { year: z.number().optional(), month: z.number().min(1).max(12).optional() },
-  getMonthlySpending
+  getMonthlySpending,
 );
 
 server.tool('get_net_worth', 'Current net worth across all accounts', {}, getNetWorth);
@@ -30,8 +31,13 @@ server.tool('get_goal_progress', 'Betterment goal balances and progress', {}, ge
 server.tool('get_derived_ceiling', 'Implied monthly spending limit from net income minus savings outflows', {}, getDerivedCeiling);
 server.tool('get_adapter_health', 'Last run time and status for each adapter', {}, getAdapterHealth);
 server.tool('get_financial_snapshot', 'All key metrics in one call', {}, getFinancialSnapshot);
+server.tool(
+  'read_financial_journal',
+  'LLM-generated monthly summaries of financial state (Karpathy wiki pattern)',
+  { months: z.number().min(1).max(24).default(3) },
+  readFinancialJournal,
+);
 
-// SSE transport — Claude Code connects via http://NAS_IP:PORT/sse
 const transports = new Map<string, SSEServerTransport>();
 
 const httpServer = createServer(async (req, res) => {

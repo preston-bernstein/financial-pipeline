@@ -64,7 +64,6 @@ services:
       - betterment_session:/session
     secrets:
       - postgres_password
-      - betterment_credentials
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -84,7 +83,6 @@ services:
       - vanguard_session:/session
     secrets:
       - postgres_password
-      - vanguard_credentials
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -104,7 +102,6 @@ services:
       - fidelity_session:/session
     secrets:
       - postgres_password
-      - fidelity_credentials
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -118,6 +115,29 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       LOKI_URL: ${LOKI_URL}
+      NTFY_URL: ${NTFY_URL}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+      JOURNAL_BROKER_URL: ${JOURNAL_BROKER_URL}
+      JOURNAL_MODEL: ${JOURNAL_MODEL:-llama3.2}
+    secrets:
+      - postgres_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  llm-enricher:
+    image: financial-pipeline/llm-enricher
+    build:
+      context: .
+      dockerfile: services/llm-enricher/Dockerfile
+      platforms: ["linux/amd64"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      LOKI_URL: ${LOKI_URL}
+      NTFY_URL: ${NTFY_URL}
+      NTFY_TOPIC: ${NTFY_TOPIC}
+      OLLAMA_BROKER_URL: ${OLLAMA_BROKER_URL}
+      ENRICHER_MODEL: ${ENRICHER_MODEL:-llama3.2:3b}
     secrets:
       - postgres_password
     depends_on:
@@ -197,9 +217,3 @@ secrets:
     file: ./secrets/grafana_password.txt
   plaid_credentials:
     file: ./secrets/plaid_credentials.json
-  betterment_credentials:
-    file: ./secrets/betterment_credentials.json
-  vanguard_credentials:
-    file: ./secrets/vanguard_credentials.json
-  fidelity_credentials:
-    file: ./secrets/fidelity_credentials.json

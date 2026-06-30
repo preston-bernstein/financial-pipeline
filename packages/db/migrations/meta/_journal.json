@@ -8,6 +8,13 @@
       "when": 1781029184495,
       "tag": "0000_same_bulldozer",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782777600000,
+      "tag": "0001_enrichment_journal",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { enrichBatch, PROMPT_VERSION_L1, PROMPT_VERSION_L2 } from './enrich.js';
+import { enrichBatch, PROMPT_VERSION_L1, PROMPT_VERSION_L2, PROMPT_VERSION_L3 } from './enrich.js';
+import type { RunpodConfig } from './enrich.js';
 
 const BROKER = 'http://broker:11436';
-const MODELS = { l1: 'llama3.2:3b', l2: 'llama3.1:8b' };
+const MODELS = { l1: 'qwen2.5:3b', l2: 'qwen2.5:7b' };
+const MODELS_L3 = { ...MODELS, l3: 'Qwen/Qwen2.5-72B-Instruct' };
+const RUNPOD: RunpodConfig = { baseUrl: 'https://api.runpod.ai/v2/abc123/openai/v1', apiKey: 'rp_test' };
 
 beforeEach(() => vi.restoreAllMocks());
 
@@ -115,7 +118,69 @@ describe('enrichBatch — cascade behaviour', () => {
       .mockResolvedValue({ ok: true, json: async () => ({ response: '{"category":"groceries"}' }) }), // L2 ok
     );
     const result = await enrichBatch([TX_KROGER], BROKER, MODELS);
-    // L1 got no results → all txs escalate to L2
     expect(result[0]).toMatchObject({ llm_category: 'groceries', prompt_version: PROMPT_VERSION_L2 });
+  });
+});
+
+describe('enrichBatch — L3 RunPod escalation', () => {
+  it('does not call L3 when L2 succeeds with a real category', async () => {
+    mockFetch(
+      '[{"id":1,"category":"other","conf":"low"}]', // L1: escalate
+      '{"category":"shopping"}',                    // L2: classified → accept, no L3
+    );
+    const result = await enrichBatch([TX_WEIRD], BROKER, MODELS_L3, RUNPOD);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result[0]).toMatchObject({ llm_category: 'shopping', prompt_version: PROMPT_VERSION_L2 });
+  });
+
+  it('escalates to L3 when L2 also returns "other"', async () => {
+    // L3 response is OpenAI chat completions format
+    const l3Response = JSON.stringify({
+      choices: [{ message: { content: 'entertainment' } }],
+    });
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '[{"id":1,"category":"other","conf":"low"}]' }) }) // L1
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '{"category":"other"}' }) })  // L2 → other
+      .mockResolvedValueOnce({ ok: true, json: async () => JSON.parse(l3Response) }),                 // L3
+    );
+    const result = await enrichBatch([TX_WEIRD], BROKER, MODELS_L3, RUNPOD);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(result[0]).toMatchObject({ llm_category: 'entertainment', llm_model: MODELS_L3.l3, prompt_version: PROMPT_VERSION_L3 });
+  });
+
+  it('does not call RunPod when L3 model is not configured', async () => {
+    mockFetch(
+      '[{"id":1,"category":"other","conf":"low"}]',
+      '{"category":"other"}', // L2 also other — but no L3 configured
+    );
+    // No l3 in models, no runpod config
+    const result = await enrichBatch([TX_WEIRD], BROKER, MODELS);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result[0]).toMatchObject({ llm_category: 'other', prompt_version: PROMPT_VERSION_L2 });
+  });
+
+  it('falls back to "other" when RunPod L3 errors', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '[{"id":1,"category":"other","conf":"low"}]' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '{"category":"other"}' }) })
+      .mockResolvedValueOnce({ ok: false, status: 500 }), // L3 RunPod error
+    );
+    const result = await enrichBatch([TX_WEIRD], BROKER, MODELS_L3, RUNPOD);
+    expect(result[0]).toMatchObject({ llm_category: 'other', prompt_version: PROMPT_VERSION_L3 });
+  });
+
+  it('sends correct Authorization header to RunPod', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '[{"id":1,"category":"other","conf":"low"}]' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '{"category":"other"}' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: 'shopping' } }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await enrichBatch([TX_WEIRD], BROKER, MODELS_L3, RUNPOD);
+
+    const l3Call = fetchMock.mock.calls[2]!;
+    expect(l3Call[0]).toContain('runpod.ai');
+    const headers = l3Call[1].headers as Record<string, string>;
+    expect(headers['Authorization']).toBe(`Bearer ${RUNPOD.apiKey}`);
   });
 });

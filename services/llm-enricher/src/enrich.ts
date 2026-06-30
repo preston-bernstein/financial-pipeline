@@ -5,7 +5,8 @@ const log = createLogger('llm-enricher');
 
 export const PROMPT_VERSION_L1 = 'enrich-v1-l1';
 export const PROMPT_VERSION_L2 = 'enrich-v1-l2';
-/** Backwards-compat alias used by --backfill reset logic */
+export const PROMPT_VERSION_L3 = 'enrich-v1-l3';
+/** Backwards-compat alias */
 export const PROMPT_VERSION = PROMPT_VERSION_L1;
 
 export interface TxToEnrich {
@@ -21,6 +22,11 @@ export interface EnrichedTx {
   llm_category: Category;
   llm_model: string;
   prompt_version: string;
+}
+
+export interface RunpodConfig {
+  baseUrl: string;  // e.g. https://api.runpod.ai/v2/<endpoint_id>/openai/v1
+  apiKey: string;
 }
 
 interface L1Result {
@@ -70,28 +76,17 @@ function parseL1Response(raw: string, txs: TxToEnrich[]): L1Result[] {
     return [];
   }
 
-  const results: L1Result[] = [];
-  for (const item of parsed) {
+  return parsed.flatMap(item => {
     const tx = txs[item.id - 1];
-    if (!tx) continue;
+    if (!tx) return [];
     const cat = item.category?.toLowerCase().trim();
     const conf = (['high', 'med', 'low'] as const).find(c => c === item.conf) ?? 'low';
-    results.push({
-      id: tx.id,
-      llm_category: isValidCategory(cat) ? cat : 'other',
-      conf,
-    });
-  }
-  return results;
+    return [{ id: tx.id, llm_category: isValidCategory(cat) ? cat : ('other' as Category), conf }];
+  });
 }
 
-async function runL1Batch(
-  txs: TxToEnrich[],
-  brokerUrl: string,
-  model: string,
-): Promise<L1Result[]> {
+async function runL1Batch(txs: TxToEnrich[], brokerUrl: string, model: string): Promise<L1Result[]> {
   const results: L1Result[] = [];
-
   for (let i = 0; i < txs.length; i += BATCH_SIZE) {
     const chunk = txs.slice(i, i + BATCH_SIZE);
     try {
@@ -107,11 +102,10 @@ async function runL1Batch(
       log.error({ err }, 'L1 batch failed');
     }
   }
-
   return results;
 }
 
-// ─── L2: careful single-tx pass ──────────────────────────────────────────────
+// ─── L2: careful single-tx pass (local) ──────────────────────────────────────
 
 function buildL2Prompt(tx: TxToEnrich): string {
   const merchant = tx.merchant_name ? ` (${tx.merchant_name})` : '';
@@ -144,11 +138,7 @@ Transaction: "${tx.description}"${merchant} $${Math.abs(amt).toFixed(2)} ${sign}
 Reply with ONLY valid JSON: {"category":"<category>"}`;
 }
 
-async function runL2Single(
-  tx: TxToEnrich,
-  brokerUrl: string,
-  model: string,
-): Promise<Category> {
+async function runL2Single(tx: TxToEnrich, brokerUrl: string, model: string): Promise<Category> {
   try {
     const res = await fetch(`${brokerUrl}/api/generate`, {
       method: 'POST',
@@ -157,8 +147,7 @@ async function runL2Single(
     });
     if (!res.ok) { log.error({ status: res.status, id: tx.id }, 'L2 broker error'); return 'other'; }
     const data = await res.json() as { response?: string };
-    const raw = data.response ?? '';
-    const jsonMatch = raw.match(/\{[^}]+\}/);
+    const jsonMatch = (data.response ?? '').match(/\{[^}]+\}/);
     if (!jsonMatch) return 'other';
     const parsed = JSON.parse(jsonMatch[0]) as { category?: string };
     const cat = parsed.category?.toLowerCase().trim();
@@ -169,51 +158,121 @@ async function runL2Single(
   }
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── L3: 70B on RunPod serverless — only for still-"other" after L2 ──────────
 
-function shouldEscalate(r: L1Result): boolean {
-  // Escalate if confidence is not high, or if L1 landed on "other"
-  // (L2's richer prompt may categorize what L1 gave up on)
+function buildL3Messages(tx: TxToEnrich): Array<{ role: string; content: string }> {
+  const merchant = tx.merchant_name ? ` (merchant: ${tx.merchant_name})` : '';
+  const amt = parseFloat(tx.amount);
+  const sign = amt >= 0 ? 'debit' : 'credit';
+
+  return [
+    {
+      role: 'system',
+      content: `You are a financial transaction classifier. Classify transactions into exactly one of these categories: ${CATEGORY_LIST}. Reply with ONLY the category name — no explanation, no punctuation.`,
+    },
+    {
+      role: 'user',
+      content: `Transaction: "${tx.description}"${merchant} $${Math.abs(amt).toFixed(2)} ${sign}\n\nCategory:`,
+    },
+  ];
+}
+
+async function runL3Single(tx: TxToEnrich, runpod: RunpodConfig, model: string): Promise<Category> {
+  try {
+    const res = await fetch(`${runpod.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${runpod.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: buildL3Messages(tx),
+        max_tokens: 10,
+        temperature: 0,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      log.error({ status: res.status, body, id: tx.id }, 'L3 RunPod error');
+      return 'other';
+    }
+
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const raw = data.choices?.[0]?.message?.content?.toLowerCase().trim() ?? '';
+    const cat = raw.replace(/[^a-z_]/g, '');
+    return isValidCategory(cat) ? cat : 'other';
+  } catch (err) {
+    log.error({ err, id: tx.id }, 'L3 single failed');
+    return 'other';
+  }
+}
+
+// ─── Cascade logic ────────────────────────────────────────────────────────────
+
+function shouldEscalateFromL1(r: L1Result): boolean {
   return r.conf !== 'high' || r.llm_category === 'other';
 }
 
 export async function enrichBatch(
   txs: TxToEnrich[],
   brokerUrl: string,
-  models: { l1: string; l2: string },
+  models: { l1: string; l2: string; l3?: string },
+  runpod?: RunpodConfig,
 ): Promise<EnrichedTx[]> {
   if (txs.length === 0) return [];
 
+  const l3Enabled = !!(models.l3 && runpod);
+
   // L1 — fast batch pass
   const l1Results = await runL1Batch(txs, brokerUrl, models.l1);
-
-  const accepted: EnrichedTx[] = [];
-  const toEscalate: Array<{ tx: TxToEnrich }> = [];
-
-  // Index txs by id for L2 lookup
+  const l1Ids = new Set(l1Results.map(r => r.id));
   const txById = new Map(txs.map(t => [t.id, t]));
 
+  const accepted: EnrichedTx[] = [];
+  const toEscalateL2: TxToEnrich[] = [];
+
   for (const r of l1Results) {
-    if (shouldEscalate(r)) {
+    if (shouldEscalateFromL1(r)) {
       const tx = txById.get(r.id);
-      if (tx) toEscalate.push({ tx });
+      if (tx) toEscalateL2.push(tx);
     } else {
       accepted.push({ id: r.id, llm_category: r.llm_category, llm_model: models.l1, prompt_version: PROMPT_VERSION_L1 });
     }
   }
-
-  // Any tx that got no L1 result at all also escalates
-  const l1Ids = new Set(l1Results.map(r => r.id));
+  // Tx missing from L1 response also escalates
   for (const tx of txs) {
-    if (!l1Ids.has(tx.id)) toEscalate.push({ tx });
+    if (!l1Ids.has(tx.id)) toEscalateL2.push(tx);
   }
 
-  log.info({ total: txs.length, l1_accepted: accepted.length, l2_escalated: toEscalate.length }, 'cascade split');
+  log.info({
+    total: txs.length,
+    l1_accepted: accepted.length,
+    l2_escalated: toEscalateL2.length,
+    l3_enabled: l3Enabled,
+  }, 'cascade L1 split');
 
-  // L2 — careful single-tx pass for escalated items
-  for (const { tx } of toEscalate) {
+  // L2 — careful single-tx pass
+  const toEscalateL3: TxToEnrich[] = [];
+
+  for (const tx of toEscalateL2) {
     const cat = await runL2Single(tx, brokerUrl, models.l2);
-    accepted.push({ id: tx.id, llm_category: cat, llm_model: models.l2, prompt_version: PROMPT_VERSION_L2 });
+    if (cat === 'other' && l3Enabled) {
+      toEscalateL3.push(tx);
+    } else {
+      accepted.push({ id: tx.id, llm_category: cat, llm_model: models.l2, prompt_version: PROMPT_VERSION_L2 });
+    }
+  }
+
+  if (toEscalateL3.length > 0) {
+    log.info({ l3_escalated: toEscalateL3.length }, 'cascade L2→L3 escalation');
+  }
+
+  // L3 — RunPod 70B, only for still-"other" after L2
+  for (const tx of toEscalateL3) {
+    const cat = await runL3Single(tx, runpod!, models.l3!);
+    accepted.push({ id: tx.id, llm_category: cat, llm_model: models.l3!, prompt_version: PROMPT_VERSION_L3 });
   }
 
   return accepted;

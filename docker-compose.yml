@@ -118,7 +118,7 @@ services:
       NTFY_URL: ${NTFY_URL}
       NTFY_TOPIC: ${NTFY_TOPIC}
       JOURNAL_BROKER_URL: ${JOURNAL_BROKER_URL}
-      JOURNAL_MODEL: ${JOURNAL_MODEL:-llama3.2}
+      JOURNAL_MODEL: ${JOURNAL_MODEL:-qwen2.5}
     secrets:
       - postgres_password
     depends_on:
@@ -137,8 +137,11 @@ services:
       NTFY_URL: ${NTFY_URL}
       NTFY_TOPIC: ${NTFY_TOPIC}
       OLLAMA_BROKER_URL: ${OLLAMA_BROKER_URL}
-      ENRICHER_MODEL: ${ENRICHER_MODEL:-llama3.2:3b}
-      ENRICHER_MODEL_L2: ${ENRICHER_MODEL_L2:-llama3.1:8b}
+      ENRICHER_MODEL: ${ENRICHER_MODEL:-qwen2.5:3b}
+      ENRICHER_MODEL_L2: ${ENRICHER_MODEL_L2:-qwen2.5:7b}
+      ENRICHER_MODEL_L3: ${ENRICHER_MODEL_L3:-}
+      RUNPOD_BASE_URL: ${RUNPOD_BASE_URL:-}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
     secrets:
       - postgres_password
     depends_on:

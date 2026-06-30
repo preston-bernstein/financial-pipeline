@@ -3,13 +3,21 @@ import { isNull, eq } from 'drizzle-orm';
 import { Cron } from 'croner';
 import { createLogger, sendNtfyAlert } from '@financial-pipeline/adapter-utils';
 import { db, transactions } from '@financial-pipeline/db';
-import { enrichBatch, PROMPT_VERSION } from './enrich.js';
+import { enrichBatch, PROMPT_VERSION, type RunpodConfig } from './enrich.js';
 
 const log = createLogger('llm-enricher');
 
 const BROKER_URL = process.env.OLLAMA_BROKER_URL;
-const MODEL_L1 = process.env.ENRICHER_MODEL ?? 'llama3.2:3b';
-const MODEL_L2 = process.env.ENRICHER_MODEL_L2 ?? 'llama3.1:8b';
+const MODEL_L1 = process.env.ENRICHER_MODEL    ?? 'qwen2.5:3b';
+const MODEL_L2 = process.env.ENRICHER_MODEL_L2 ?? 'qwen2.5:7b';
+const MODEL_L3 = process.env.ENRICHER_MODEL_L3;          // e.g. Qwen/Qwen2.5-72B-Instruct
+const RUNPOD_BASE_URL = process.env.RUNPOD_BASE_URL;      // https://api.runpod.ai/v2/<id>/openai/v1
+const RUNPOD_API_KEY  = process.env.RUNPOD_API_KEY;
+
+function runpodConfig(): RunpodConfig | undefined {
+  if (RUNPOD_BASE_URL && RUNPOD_API_KEY) return { baseUrl: RUNPOD_BASE_URL, apiKey: RUNPOD_API_KEY };
+  return undefined;
+}
 
 async function run(): Promise<void> {
   if (!BROKER_URL) {
@@ -33,9 +41,15 @@ async function run(): Promise<void> {
     return;
   }
 
-  log.info({ count: pending.length, l1: MODEL_L1, l2: MODEL_L2 }, 'enriching transactions');
+  const rp = runpodConfig();
+  log.info({ count: pending.length, l1: MODEL_L1, l2: MODEL_L2, l3: MODEL_L3 ?? 'disabled', runpod: !!rp }, 'enriching');
 
-  const enriched = await enrichBatch(pending, BROKER_URL, { l1: MODEL_L1, l2: MODEL_L2 });
+  const enriched = await enrichBatch(
+    pending,
+    BROKER_URL,
+    { l1: MODEL_L1, l2: MODEL_L2, l3: MODEL_L3 },
+    rp,
+  );
 
   for (const e of enriched) {
     await db
@@ -44,9 +58,11 @@ async function run(): Promise<void> {
       .where(eq(transactions.id, e.id));
   }
 
-  const l1Count = enriched.filter(e => e.prompt_version.endsWith('-l1')).length;
-  const l2Count = enriched.filter(e => e.prompt_version.endsWith('-l2')).length;
-  log.info({ enriched: enriched.length, l1_accepted: l1Count, l2_escalated: l2Count }, 'enrichment complete');
+  const byLevel = enriched.reduce<Record<string, number>>((acc, e) => {
+    acc[e.prompt_version] = (acc[e.prompt_version] ?? 0) + 1;
+    return acc;
+  }, {});
+  log.info({ enriched: enriched.length, by_level: byLevel }, 'enrichment complete');
 }
 
 async function backfill(): Promise<void> {
@@ -72,4 +88,4 @@ new Cron('30 */4 * * *', () => {
   });
 });
 
-log.info(`llm-enricher scheduled (every 4h+30m), l1=${MODEL_L1} l2=${MODEL_L2}`);
+log.info(`llm-enricher scheduled, l1=${MODEL_L1} l2=${MODEL_L2} l3=${MODEL_L3 ?? 'disabled'}`);

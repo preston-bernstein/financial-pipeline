@@ -8,6 +8,8 @@
     { "path": "./services/fidelity-adapter" },
     { "path": "./services/fungible-tap" },
     { "path": "./services/materializer" },
-    { "path": "./services/mcp-server" }
+    { "path": "./services/mcp-server" },
+    { "path": "./services/plaid-tap" },
+    { "path": "./services/llm-enricher" }
   ]
 }

@@ -10,7 +10,8 @@ export async function getNetWorth() {
     ORDER BY source, account_id, captured_at DESC
   `);
 
-  const accounts = rows as Array<{
+  // db.execute returns Record<string, unknown>[]; safe per the SELECT column list above
+  const accounts = rows as unknown as Array<{
     source: string;
     account_id: string;
     account_name: string;

@@ -152,7 +152,7 @@ async function runL2Single(tx: TxToEnrich, brokerUrl: string, model: string): Pr
     const jsonMatch = (data.response ?? '').match(/\{[^}]+\}/);
     if (!jsonMatch) return 'other';
     const parsed = JSON.parse(jsonMatch[0]) as { category?: string };
-    const cat = parsed.category?.toLowerCase().trim();
+    const cat = parsed.category?.toLowerCase().trim() ?? '';
     return isValidCategory(cat) ? cat : 'other';
   } catch (err) {
     log.error({ err, id: tx.id }, 'L2 single failed');

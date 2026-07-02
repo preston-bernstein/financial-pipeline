@@ -14,7 +14,8 @@ export async function getAdapterHealth() {
     ORDER BY source, started_at DESC
   `);
 
-  const lastRuns = rows as Array<{
+  // db.execute returns Record<string, unknown>[]; safe per the SELECT column list above
+  const lastRuns = rows as unknown as Array<{
     source: string;
     status: string;
     completed_at: string | null;

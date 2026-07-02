@@ -14,7 +14,8 @@ export async function getGoalProgress() {
     ORDER BY account_id, captured_at DESC
   `);
 
-  const goals = rows as Array<{
+  // db.execute returns Record<string, unknown>[]; safe per the SELECT column list above
+  const goals = rows as unknown as Array<{
     account_id: string;
     account_name: string;
     balance: string;

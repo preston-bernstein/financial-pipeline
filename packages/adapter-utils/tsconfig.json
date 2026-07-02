@@ -9,5 +9,5 @@
     { "path": "../db" }
   ],
   "include": ["src"],
-  "exclude": ["src/browser.ts"]
+  "exclude": ["src/browser.ts", "src/**/*.test.ts"]
 }

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { PlaidApi, PlaidEnvironments, Configuration } from 'plaid';
 import { sql } from 'drizzle-orm';
 import { Cron } from 'croner';
@@ -28,6 +29,22 @@ function saveCursors(cursors: CursorStore): void {
   writeFileSync(CURSORS_PATH, JSON.stringify(cursors, null, 2));
 }
 
+// Never persist raw access tokens — cursor file keys are sha256 of the token.
+function cursorKey(accessToken: string): string {
+  return createHash('sha256').update(accessToken).digest('hex');
+}
+
+// Rewrites the store keyed by token hash: migrates legacy plaintext-token keys
+// and prunes entries for rotated/removed tokens.
+function migrateCursors(raw: CursorStore, accessTokens: string[]): CursorStore {
+  const migrated: CursorStore = {};
+  for (const token of accessTokens) {
+    const value = raw[cursorKey(token)] ?? raw[token];
+    if (value) migrated[cursorKey(token)] = value;
+  }
+  return migrated;
+}
+
 async function run(): Promise<void> {
   const creds: PlaidCredentials = JSON.parse(
     readFileSync('/run/secrets/plaid_credentials', 'utf8')
@@ -51,11 +68,14 @@ async function run(): Promise<void> {
       })
     );
 
-    const cursors = loadCursors();
+    // Migrate-and-persist up front so plaintext token keys are scrubbed from
+    // disk even if this run fails partway.
+    const cursors = migrateCursors(loadCursors(), creds.access_tokens);
+    saveCursors(cursors);
     let totalRowsWritten = 0;
 
     for (const accessToken of creds.access_tokens) {
-      let cursor: string | undefined = cursors[accessToken];
+      let cursor: string | undefined = cursors[cursorKey(accessToken)];
       let hasMore = true;
 
       while (hasMore) {
@@ -106,7 +126,7 @@ async function run(): Promise<void> {
         hasMore = data.has_more;
       }
 
-      cursors[accessToken] = cursor!;
+      cursors[cursorKey(accessToken)] = cursor!;
     }
 
     saveCursors(cursors);

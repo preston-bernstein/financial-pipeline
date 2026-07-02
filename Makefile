@@ -28,40 +28,31 @@ deploy: push
 typecheck:
 	npx tsc --noEmit
 
-# Session seeding — runs browser locally on Mac (needs display), then pushes to NAS volume.
+# Session seeding — runs browser locally on Mac (needs display), then streams the
+# storageState into the NAS volume over ssh stdin.
 # Requires: npx playwright install chromium (once)
+# The session JSON holds live brokerage cookies: it lives only in a chmod-600
+# mktemp file locally (deleted after transfer) and never touches NAS /tmp.
+define seed_session
+	@TMP=$$(mktemp) && chmod 600 $$TMP && \
+	( SESSION_PATH=$$TMP npx tsx services/$(1)-adapter/src/index.ts --seed-session && \
+	  cat $$TMP | ssh $(NAS_USER)@$(NAS_HOST) \
+	    "$(DOCKER) run --rm -i -v $(VOLUME_PREFIX)_$(1)_session:/session alpine \
+	      sh -c 'cat > /session/$(1).storageState.json && chmod 600 /session/$(1).storageState.json'" ) ; \
+	rc=$$? ; rm -f $$TMP ; exit $$rc
+endef
+
 seed-betterment:
 	@echo "Opening Betterment in local browser — log in, session auto-saves when dashboard loads."
-	SESSION_PATH=/tmp/betterment.storageState.json \
-	  npx tsx services/betterment-adapter/src/index.ts --seed-session
-	scp /tmp/betterment.storageState.json $(NAS_USER)@$(NAS_HOST):/tmp/
-	ssh $(NAS_USER)@$(NAS_HOST) \
-	  "$(DOCKER) run --rm \
-	    -v $(VOLUME_PREFIX)_betterment_session:/session \
-	    -v /tmp:/src alpine sh -c \
-	    'cp /src/betterment.storageState.json /session/betterment.storageState.json'"
+	$(call seed_session,betterment)
 	@echo "Betterment session seeded."
 
 seed-vanguard:
 	@echo "Opening Vanguard in local browser — log in, session auto-saves when accounts page loads."
-	SESSION_PATH=/tmp/vanguard.storageState.json \
-	  npx tsx services/vanguard-adapter/src/index.ts --seed-session
-	scp /tmp/vanguard.storageState.json $(NAS_USER)@$(NAS_HOST):/tmp/
-	ssh $(NAS_USER)@$(NAS_HOST) \
-	  "$(DOCKER) run --rm \
-	    -v $(VOLUME_PREFIX)_vanguard_session:/session \
-	    -v /tmp:/src alpine sh -c \
-	    'cp /src/vanguard.storageState.json /session/vanguard.storageState.json'"
+	$(call seed_session,vanguard)
 	@echo "Vanguard session seeded."
 
 seed-fidelity:
 	@echo "Opening Fidelity in local browser — log in, session auto-saves when portfolio page loads."
-	SESSION_PATH=/tmp/fidelity.storageState.json \
-	  npx tsx services/fidelity-adapter/src/index.ts --seed-session
-	scp /tmp/fidelity.storageState.json $(NAS_USER)@$(NAS_HOST):/tmp/
-	ssh $(NAS_USER)@$(NAS_HOST) \
-	  "$(DOCKER) run --rm \
-	    -v $(VOLUME_PREFIX)_fidelity_session:/session \
-	    -v /tmp:/src alpine sh -c \
-	    'cp /src/fidelity.storageState.json /session/fidelity.storageState.json'"
+	$(call seed_session,fidelity)
 	@echo "Fidelity session seeded."

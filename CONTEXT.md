@@ -55,4 +55,4 @@ Where `monthly_net` = take-home after taxes and pre-tax 401k deduction. Defined 
 - Ollama resource broker (desktop 10.0.0.243) — LLM inference (never raw :11434)
   - `:11435` — interactive / journal generation
   - `:11436` — batch enrichment
-- MCP server on NAS port 3101, SSE transport
+- MCP server on NAS port 3101, Streamable HTTP transport (`/mcp`), bearer-token auth + Host/Origin allowlisting (`MCP_AUTH_TOKEN`, `MCP_ALLOWED_HOSTS`, `MCP_ALLOWED_ORIGINS` in `.env`)

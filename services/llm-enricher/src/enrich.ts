@@ -138,14 +138,16 @@ Transaction: "${tx.description}"${merchant} $${Math.abs(amt).toFixed(2)} ${sign}
 Reply with ONLY valid JSON: {"category":"<category>"}`;
 }
 
-async function runL2Single(tx: TxToEnrich, brokerUrl: string, model: string): Promise<Category> {
+// Returns null on transport failure (broker down / HTTP error) so the tx stays
+// unstamped and retries next run; 'other' is reserved for genuine model verdicts.
+async function runL2Single(tx: TxToEnrich, brokerUrl: string, model: string): Promise<Category | null> {
   try {
     const res = await fetch(`${brokerUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, prompt: buildL2Prompt(tx), stream: false }),
     });
-    if (!res.ok) { log.error({ status: res.status, id: tx.id }, 'L2 broker error'); return 'other'; }
+    if (!res.ok) { log.error({ status: res.status, id: tx.id }, 'L2 broker error'); return null; }
     const data = await res.json() as { response?: string };
     const jsonMatch = (data.response ?? '').match(/\{[^}]+\}/);
     if (!jsonMatch) return 'other';
@@ -154,7 +156,7 @@ async function runL2Single(tx: TxToEnrich, brokerUrl: string, model: string): Pr
     return isValidCategory(cat) ? cat : 'other';
   } catch (err) {
     log.error({ err, id: tx.id }, 'L2 single failed');
-    return 'other';
+    return null;
   }
 }
 
@@ -177,7 +179,9 @@ function buildL3Messages(tx: TxToEnrich): Array<{ role: string; content: string 
   ];
 }
 
-async function runL3Single(tx: TxToEnrich, runpod: RunpodConfig, model: string): Promise<Category> {
+// Same contract as runL2Single: null = transport failure (leave unstamped, retry
+// next run); 'other' = the model genuinely couldn't classify.
+async function runL3Single(tx: TxToEnrich, runpod: RunpodConfig, model: string): Promise<Category | null> {
   try {
     const res = await fetch(`${runpod.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -196,7 +200,7 @@ async function runL3Single(tx: TxToEnrich, runpod: RunpodConfig, model: string):
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       log.error({ status: res.status, body, id: tx.id }, 'L3 RunPod error');
-      return 'other';
+      return null;
     }
 
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
@@ -205,7 +209,7 @@ async function runL3Single(tx: TxToEnrich, runpod: RunpodConfig, model: string):
     return isValidCategory(cat) ? cat : 'other';
   } catch (err) {
     log.error({ err, id: tx.id }, 'L3 single failed');
-    return 'other';
+    return null;
   }
 }
 
@@ -255,10 +259,13 @@ export async function enrichBatch(
 
   // L2 — careful single-tx pass
   const toEscalateL3: TxToEnrich[] = [];
+  let skippedTransportFailures = 0;
 
   for (const tx of toEscalateL2) {
     const cat = await runL2Single(tx, brokerUrl, models.l2);
-    if (cat === 'other' && l3Enabled) {
+    if (cat === null) {
+      skippedTransportFailures++;
+    } else if (cat === 'other' && l3Enabled) {
       toEscalateL3.push(tx);
     } else {
       accepted.push({ id: tx.id, llm_category: cat, llm_model: models.l2, prompt_version: PROMPT_VERSION_L2 });
@@ -272,7 +279,15 @@ export async function enrichBatch(
   // L3 — RunPod 70B, only for still-"other" after L2
   for (const tx of toEscalateL3) {
     const cat = await runL3Single(tx, runpod!, models.l3!);
+    if (cat === null) {
+      skippedTransportFailures++;
+      continue;
+    }
     accepted.push({ id: tx.id, llm_category: cat, llm_model: models.l3!, prompt_version: PROMPT_VERSION_L3 });
+  }
+
+  if (skippedTransportFailures > 0) {
+    log.warn({ skipped: skippedTransportFailures }, 'transport failures — txs left unenriched, will retry next run');
   }
 
   return accepted;

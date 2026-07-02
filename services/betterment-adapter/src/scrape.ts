@@ -23,11 +23,12 @@ export async function scrapeGoals(page: Page): Promise<BettermentGoal[]> {
   );
 
   const goals = await page.evaluate(() => {
-    // Try multiple selector strategies in priority order
-    const tiles =
-      Array.from(document.querySelectorAll('[data-testid="goal-tile"]')) ||
-      Array.from(document.querySelectorAll('[data-testid="goal-card"]')) ||
-      Array.from(document.querySelectorAll('[class*="GoalTile"]'));
+    // Try multiple selector strategies in priority order — must check .length,
+    // an empty Array.from() result is truthy so || never falls through
+    const byTileId = Array.from(document.querySelectorAll('[data-testid="goal-tile"]'));
+    const byCardId = Array.from(document.querySelectorAll('[data-testid="goal-card"]'));
+    const byClass = Array.from(document.querySelectorAll('[class*="GoalTile"]'));
+    const tiles = byTileId.length > 0 ? byTileId : byCardId.length > 0 ? byCardId : byClass;
 
     return tiles.map((tile) => {
       const nameEl =

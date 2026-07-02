@@ -85,13 +85,13 @@ describe('enrichBatch — cascade behaviour', () => {
     expect(transfers).toMatchObject({ llm_category: 'transfers', prompt_version: PROMPT_VERSION_L2 });
   });
 
-  it('falls back to "other" when L2 broker errors', async () => {
+  it('leaves tx unstamped (skips) when L2 broker errors, so next run retries', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '[{"id":1,"category":"other","conf":"low"}]' }) })
       .mockResolvedValueOnce({ ok: false, status: 503 }),
     );
     const result = await enrichBatch([TX_WEIRD], BROKER, MODELS);
-    expect(result[0]).toMatchObject({ llm_category: 'other', prompt_version: PROMPT_VERSION_L2 });
+    expect(result).toHaveLength(0); // transport failure must NOT stamp 'other'
   });
 
   it('escalates tx missing from L1 response entirely', async () => {
@@ -159,14 +159,14 @@ describe('enrichBatch — L3 RunPod escalation', () => {
     expect(result[0]).toMatchObject({ llm_category: 'other', prompt_version: PROMPT_VERSION_L2 });
   });
 
-  it('falls back to "other" when RunPod L3 errors', async () => {
+  it('leaves tx unstamped (skips) when RunPod L3 errors, so next run retries', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '[{"id":1,"category":"other","conf":"low"}]' }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ response: '{"category":"other"}' }) })
       .mockResolvedValueOnce({ ok: false, status: 500 }), // L3 RunPod error
     );
     const result = await enrichBatch([TX_WEIRD], BROKER, MODELS_L3, RUNPOD);
-    expect(result[0]).toMatchObject({ llm_category: 'other', prompt_version: PROMPT_VERSION_L3 });
+    expect(result).toHaveLength(0); // transport failure must NOT stamp 'other'
   });
 
   it('sends correct Authorization header to RunPod', async () => {

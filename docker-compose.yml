@@ -157,9 +157,14 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       MCP_PORT: ${MCP_PORT}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
       LOKI_URL: ${LOKI_URL}
     ports:
-      - "${MCP_PORT}:${MCP_PORT}"
+      # MCP_BIND_HOST lets you pin the listener to one interface (e.g. the
+      # Tailscale IP) instead of every interface on the NAS
+      - "${MCP_BIND_HOST:-0.0.0.0}:${MCP_PORT}:${MCP_PORT}"
     volumes:
       - ./pipeline.config.toml:/config/pipeline.config.toml:ro
     secrets:

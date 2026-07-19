@@ -6,3 +6,6 @@ pipeline.config.toml
 *.storageState.json
 secrets/*
 !secrets/.gitkeep
+.DS_Store
+coverage/
+*.log

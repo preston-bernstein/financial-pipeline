@@ -6,7 +6,8 @@ import { isIP } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { createLogger } from '@financial-pipeline/adapter-utils';
+import { createLogger, errFields } from '@financial-pipeline/adapter-utils';
+import { renderMetrics } from './metrics.js';
 import { getMonthlySpending } from './tools/get-monthly-spending.js';
 import { getNetWorth } from './tools/get-net-worth.js';
 import { getGoalProgress } from './tools/get-goal-progress.js';
@@ -86,6 +87,20 @@ function buildServer(): McpServer {
 const httpServer = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+
+    // Payload-free metrics (CONVENTIONS.md §18) — deliberately a SEPARATE unauthenticated
+    // path, not gated behind the Host/Origin/bearer checks below. Those defenses exist
+    // because /mcp exposes full financial state to whatever can reach it; /metrics exposes
+    // only counts and timestamps (see metrics.ts), so it carries none of that risk, and
+    // coupling it to MCP's stricter checks would make a routine Prometheus scrape (which
+    // hits this by container DNS name, not localhost/an IP literal) fail the DNS-rebinding
+    // Host check for no security benefit.
+    if (url.pathname === '/metrics') {
+      const body = await renderMetrics();
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' }).end(body);
+      return;
+    }
+
     if (url.pathname !== '/mcp') {
       res.writeHead(404).end();
       return;
@@ -120,9 +135,9 @@ const httpServer = createServer(async (req, res) => {
     await server.connect(transport);
     await transport.handleRequest(req, res);
   } catch (err) {
-    log.error({ err, url: req.url }, 'request handling failed');
+    log.error({ event: 'request.failed', url: req.url, ...errFields(err) }, 'mcp-server request handling failed');
     if (!res.headersSent) res.writeHead(500).end();
   }
 });
 
-httpServer.listen(PORT, () => log.info({ port: PORT, endpoint: '/mcp', auth: !!AUTH_TOKEN }, 'mcp-server listening (Streamable HTTP)'));
+httpServer.listen(PORT, () => log.info({ event: 'server.listening', port: PORT, endpoint: '/mcp', metrics_endpoint: '/metrics', auth: !!AUTH_TOKEN }, 'mcp-server listening (Streamable HTTP)'));

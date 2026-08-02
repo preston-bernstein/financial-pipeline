@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { isNull, eq } from 'drizzle-orm';
 import { Cron } from 'croner';
-import { createLogger, sendNtfyAlert } from '@financial-pipeline/adapter-utils';
+import { createLogger, sendNtfyAlert, errFields } from '@financial-pipeline/adapter-utils';
 import { db, transactions } from '@financial-pipeline/db';
 import { enrichBatch, PROMPT_VERSION, type RunpodConfig } from './enrich.js';
 
@@ -21,7 +21,7 @@ function runpodConfig(): RunpodConfig | undefined {
 
 async function run(): Promise<void> {
   if (!BROKER_URL) {
-    log.warn('OLLAMA_BROKER_URL not set — skipping enrichment');
+    log.warn({ event: 'run.skipped', reason: 'broker_url_unset' }, 'OLLAMA_BROKER_URL not set — skipping enrichment');
     return;
   }
 
@@ -37,12 +37,15 @@ async function run(): Promise<void> {
     .where(isNull(transactions.llm_category));
 
   if (pending.length === 0) {
-    log.info('no unenriched transactions');
+    // Benign: genuinely nothing to enrich. Distinct from the total-transport-failure case
+    // below, which also ends with 0 newly-enriched rows but had work available — the
+    // did-nothing rule (CONVENTIONS.md §18) requires these two zeros stay distinguishable.
+    log.info({ event: 'enrich.no_pending', work_available: 0 }, 'no unenriched transactions');
     return;
   }
 
   const rp = runpodConfig();
-  log.info({ count: pending.length, l1: MODEL_L1, l2: MODEL_L2, l3: MODEL_L3 ?? 'disabled', runpod: !!rp }, 'enriching');
+  log.info({ event: 'enrich.started', count: pending.length, l1: MODEL_L1, l2: MODEL_L2, l3: MODEL_L3 ?? 'disabled', runpod: !!rp }, 'enriching');
 
   const enriched = await enrichBatch(
     pending,
@@ -62,7 +65,24 @@ async function run(): Promise<void> {
     acc[e.prompt_version] = (acc[e.prompt_version] ?? 0) + 1;
     return acc;
   }, {});
-  log.info({ enriched: enriched.length, by_level: byLevel }, 'enrichment complete');
+
+  if (enriched.length === 0) {
+    // pending.length > 0 (checked above) but nothing came back: every tx hit a transport
+    // failure (enrich.ts logs each one) and none produced a genuine verdict. Previously
+    // this logged "enrichment complete {enriched: 0}" at INFO — identical in every signal
+    // to "there was nothing to enrich" — so a total Ollama-broker outage was invisible.
+    log.error(
+      { event: 'enrich.total_failure', outcome: 'failed', work_available: pending.length, items_processed: 0 },
+      'enrichment made no progress — broker likely unreachable for the whole batch',
+    );
+    return;
+  }
+
+  const outcome = enriched.length === pending.length ? 'ok' : 'partial';
+  log.info(
+    { event: 'enrich.completed', outcome, work_available: pending.length, items_processed: enriched.length, by_level: byLevel },
+    'enrichment complete',
+  );
 }
 
 async function backfill(): Promise<void> {
@@ -72,19 +92,26 @@ async function backfill(): Promise<void> {
 }
 
 if (process.argv.includes('--backfill')) {
-  await backfill().catch(err => { log.error({ err }); process.exit(1); });
+  await backfill().catch(err => {
+    log.error({ event: 'cli.backfill_failed', ...errFields(err) }, 'llm-enricher --backfill failed');
+    process.exit(1);
+  });
   process.exit(0);
 }
 
 if (process.argv.includes('--run-now')) {
-  await run().catch(err => { log.error({ err }); process.exit(1); });
+  await run().catch(err => {
+    log.error({ event: 'cli.run_now_failed', ...errFields(err) }, 'llm-enricher --run-now failed');
+    process.exit(1);
+  });
   process.exit(0);
 }
 
 new Cron('30 */4 * * *', () => {
   run().catch(async (err) => {
-    log.error({ err }, 'cron run failed');
-    await sendNtfyAlert(`llm-enricher failed: ${err}`, { title: 'financial-pipeline', priority: 'default' });
+    const fields = errFields(err);
+    log.error({ event: 'cron.run_failed', ...fields }, 'llm-enricher cron run failed');
+    await sendNtfyAlert(`llm-enricher failed: ${fields.err_type}: ${fields.err_msg}`, { title: 'financial-pipeline', priority: 'default' });
   });
 });
 

@@ -6,7 +6,7 @@
 
 **Snapshot** — A point-in-time balance capture from a browser-scraped investment account (Betterment, Vanguard, Fidelity). Has `source`, `account_id`, `account_name`, `balance`, and free-form `metadata` (goal targets, allocation). Snapshots accumulate — they're never updated, only appended. Latest-per-account is the current balance.
 
-**Run** — A record of one adapter execution: `source`, `started_at`, `completed_at`, `status` (running|success|failure), `rows_written`, `error_message`. Used by `get_adapter_health` to compute staleness.
+**Run** — A record of one adapter execution: `source`, `started_at`, `completed_at`, `status` (running|success|failure), `rows_written`, `error_message`. Used by `get_adapter_health` to compute staleness. The did-nothing rule (ADR 0018): a balance-scraping adapter (betterment/vanguard/fidelity) that scraped zero rows, or scraped rows whose balances are all exactly $0.00, marks the run `status='failure'` rather than a misleadingly-successful zero — see `classifyBalanceScrape` in `packages/adapter-utils/src/scrape-outcome.ts`. `plaid-tap` is the exception: 0 rows written is a legitimate, common `success` (a sync with no new transactions), never `failure`.
 
 **Materialization** — After any adapter run, a `pending_materialization` row is inserted and `pg_notify('materialization_requested')` fires. The materializer LISTENS and re-aggregates `monthly_spending`. One pending row per adapter run; marked `processed=true` after compute.
 
@@ -42,15 +42,32 @@ Where `monthly_net` = take-home after taxes and pre-tax 401k deduction. Defined 
 | `get_net_worth` | Latest balance per account, summed across all sources |
 | `get_goal_progress` | Betterment goal balances, staleness flag |
 | `get_derived_ceiling` | Implied spending budget from config |
-| `get_adapter_health` | Last run time and staleness per adapter |
+| `get_adapter_health` | Last run time and staleness per adapter (stale reflects outcome, not just recency — a failed run never reads as fresh) |
 | `get_financial_snapshot` | All key metrics in one call |
 | `read_financial_journal` | LLM-generated monthly narrative entries |
+
+## Observability
+
+This repo is **deliberately excluded** from the shared home-lab Loki instance (ADR 0018)
+— it handles live Plaid/brokerage data, and pino's key-name `redact` deny-list
+(`packages/adapter-utils/src/logger.ts`) is not trusted alone to keep that data out of a
+shared, multi-repo-queryable log store. Logs stay local: `docker logs <container>` on the
+deploy host is the only place they exist. Compensating coverage instead of log shipping:
+a payload-free `GET /metrics` endpoint on `mcp-server` (`services/mcp-server/src/
+metrics.ts`), computed directly from Postgres — run outcomes, staleness timestamps,
+enrichment cascade tier distribution, unenriched/materialization backlog, stuck-running
+count. See ADR 0018 for the full rationale and the did-nothing-rule fix (a scrape that
+found nothing is now a failed run, not a silent success) that accompanies it.
 
 ## Infrastructure
 
 - PostgreSQL (Docker, NAS) — primary store
 - Drizzle ORM + drizzle-kit migrations
-- Grafana + Loki — logs and dashboards
+- `docker-compose.yml` also bundles a private Loki + Grafana pair; nothing in this repo
+  ships logs to it (confirmed: `createLogger` is bare `pino` to stdout, `LOKI_URL` is
+  injected into every service's environment but read by zero lines of TypeScript) —
+  removing those unused services is a known, not-yet-scheduled cleanup (ADR 0018,
+  Consequences). Do not treat their presence as log coverage.
 - ntfy — push alerts on adapter failure
 - Ollama resource broker (desktop 10.0.0.243) — LLM inference (never raw :11434)
   - `:11435` — interactive / journal generation

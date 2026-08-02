@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { eq, inArray, sql } from 'drizzle-orm';
 import postgres from 'postgres';
-import { createLogger, sendNtfyAlert } from '@financial-pipeline/adapter-utils';
+import { createLogger, sendNtfyAlert, errFields } from '@financial-pipeline/adapter-utils';
 import {
   db,
   monthly_spending,
@@ -22,10 +22,17 @@ async function materialize(): Promise<void> {
     .from(pending_materialization)
     .where(eq(pending_materialization.processed, false));
 
-  if (pending.length === 0) return;
+  if (pending.length === 0) {
+    // Previously a silent early return: a wake-up that found no pending work was
+    // byte-identical, in every log, to a dead LISTEN loop that never woke at all. The
+    // did-nothing rule (CONVENTIONS.md §18) requires "nothing to do" stay visible rather
+    // than indistinguishable from "nothing happened."
+    log.debug({ event: 'materialize.no_pending', work_available: 0 }, 'no pending materialization work');
+    return;
+  }
 
   const ids = pending.map((r) => r.id);
-  log.info({ ids }, 'materialization started');
+  log.info({ event: 'materialize.started', ids, work_available: ids.length }, 'materialization started');
 
   try {
     // 1. Aggregate monthly spending from all settled transactions
@@ -65,7 +72,7 @@ async function materialize(): Promise<void> {
         });
     }
 
-    log.info({ months: aggregates.length }, 'monthly_spending upserted');
+    log.info({ event: 'materialize.aggregated', months: aggregates.length }, 'monthly_spending upserted');
 
     // 2. Mark pending rows processed
     await db
@@ -73,13 +80,14 @@ async function materialize(): Promise<void> {
       .set({ processed: true })
       .where(inArray(pending_materialization.id, ids));
 
-    log.info({ ids }, 'materialization complete');
+    log.info({ event: 'materialize.completed', ids, outcome: 'ok', items_processed: ids.length }, 'materialization complete');
 
     // 3. Maybe generate/refresh the current month's journal entry
     await maybeGenerateJournal();
   } catch (err) {
-    log.error({ err, ids }, 'materialization failed');
-    await sendNtfyAlert(`materializer failed: ${err}`, { title: 'financial-pipeline', priority: 'high' });
+    const fields = errFields(err);
+    log.error({ event: 'materialize.failed', ids, ...fields }, 'materialization failed');
+    await sendNtfyAlert(`materializer failed: ${fields.err_type}: ${fields.err_msg}`, { title: 'financial-pipeline', priority: 'high' });
   }
 }
 
@@ -147,7 +155,13 @@ async function maybeGenerateJournal(): Promise<void> {
     goalProgress,
   });
 
-  if (!content) return;
+  if (!content) {
+    // journal.ts caught its own broker/generation error and returned null. Previously
+    // silent here, so `read_financial_journal` kept serving a stale entry with nothing
+    // flagging it — same did-nothing shape as the materialize() no-op above.
+    log.warn({ event: 'journal.generation_skipped', monthKey }, 'journal entry generation returned no content');
+    return;
+  }
 
   await db
     .insert(journal_entries)
@@ -161,7 +175,7 @@ async function maybeGenerateJournal(): Promise<void> {
       },
     });
 
-  log.info({ monthKey }, 'journal entry upserted');
+  log.info({ event: 'journal.upserted', monthKey }, 'journal entry upserted');
 }
 
 // Cold-start drain: process any rows that arrived while we were down

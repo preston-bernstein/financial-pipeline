@@ -3,7 +3,7 @@ import { Cron } from 'croner';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { chromium } from 'playwright';
-import { withRunRecord, createLogger, sendNtfyAlert } from '@financial-pipeline/adapter-utils';
+import { withRunRecord, createLogger, sendNtfyAlert, classifyBalanceScrape, errFields } from '@financial-pipeline/adapter-utils';
 import { db, snapshots } from '@financial-pipeline/db';
 import { launchBrowserWithSession } from './browser.js';
 import { scrapeAccounts } from './scrape.js';
@@ -13,15 +13,24 @@ const SESSION_PATH = process.env.SESSION_PATH ?? '/session/vanguard.storageState
 
 async function run(): Promise<void> {
   try {
-    await withRunRecord('vanguard', async () => {
+    await withRunRecord('vanguard', async ({ log: runLog }) => {
       const { context, close } = await launchBrowserWithSession(SESSION_PATH);
       try {
         const page = await context.newPage();
         const accounts = await scrapeAccounts(page);
 
-        if (accounts.length === 0) {
-          log.warn('no accounts scraped — selectors may need updating');
-          return { rowsWritten: 0 };
+        // The did-nothing rule (CONVENTIONS.md §18) — see the identical comment in
+        // betterment-adapter/src/index.ts for the full rationale. vanguard's AND filter
+        // in scrape.ts already drops zero-balance tiles, so `all_zero_balance` is
+        // structurally unreachable here, but the check stays for symmetry with the other
+        // two balance adapters and as a guard against a future scrape.ts change.
+        const { outcome, reason } = classifyBalanceScrape(accounts.map(a => a.balance));
+        if (outcome === 'suspect') {
+          runLog.error(
+            { event: 'scrape.suspect_zero', reason, tiles_found: accounts.length },
+            'vanguard scrape returned no usable balances',
+          );
+          throw new Error(`vanguard scrape suspect (${reason}) — selectors or session likely stale`);
         }
 
         const now = new Date();
@@ -43,7 +52,9 @@ async function run(): Promise<void> {
       }
     });
   } catch (err) {
-    await sendNtfyAlert(`vanguard-adapter failed: ${err}`, {
+    const fields = errFields(err);
+    log.error({ event: 'run.alert_dispatch', ...fields }, 'vanguard-adapter run failed; dispatching ntfy alert');
+    await sendNtfyAlert(`vanguard-adapter failed: ${fields.err_type}: ${fields.err_msg}`, {
       title: 'financial-pipeline',
       priority: 'high',
     });
@@ -70,15 +81,23 @@ async function seedSession(): Promise<void> {
 }
 
 if (process.argv.includes('--seed-session')) {
-  await seedSession().catch(err => { log.error({ err }); process.exit(1); });
+  await seedSession().catch(err => {
+    log.error({ event: 'cli.seed_session_failed', ...errFields(err) }, 'vanguard-adapter --seed-session failed');
+    process.exit(1);
+  });
   process.exit(0);
 }
 
 if (process.argv.includes('--run-now')) {
-  await run().catch(err => { log.error({ err }); process.exit(1); });
+  await run().catch(err => {
+    log.error({ event: 'cli.run_now_failed', ...errFields(err) }, 'vanguard-adapter --run-now failed');
+    process.exit(1);
+  });
   process.exit(0);
 }
 
 // daily at 7pm per ADR 0008
-new Cron('0 19 * * *', () => { run().catch(err => log.error({ err }, 'cron run failed')); });
+new Cron('0 19 * * *', () => {
+  run().catch(err => log.error({ event: 'cron.run_failed', ...errFields(err) }, 'vanguard-adapter cron run failed'));
+});
 log.info('vanguard-adapter scheduled (daily 19:00)');

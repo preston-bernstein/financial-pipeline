@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { PlaidApi, PlaidEnvironments, Configuration } from 'plaid';
 import { sql } from 'drizzle-orm';
 import { Cron } from 'croner';
-import { withRunRecord, createLogger } from '@financial-pipeline/adapter-utils';
+import { withRunRecord, createLogger, errFields } from '@financial-pipeline/adapter-utils';
 import { db, transactions } from '@financial-pipeline/db';
 
 const log = createLogger('plaid-tap');
@@ -55,7 +55,7 @@ async function run(): Promise<void> {
     return;
   }
 
-  await withRunRecord('plaid', async () => {
+  await withRunRecord('plaid', async ({ log: runLog }) => {
     const client = new PlaidApi(
       new Configuration({
         basePath: PlaidEnvironments[creds.environment ?? 'production'],
@@ -119,7 +119,7 @@ async function run(): Promise<void> {
         }
 
         if (data.removed.length > 0) {
-          log.info({ count: data.removed.length }, 'transactions removed by Plaid (not yet purged from local DB)');
+          runLog.info({ event: 'sync.removed', count: data.removed.length }, 'transactions removed by Plaid (not yet purged from local DB)');
         }
 
         cursor = data.next_cursor;
@@ -130,14 +130,30 @@ async function run(): Promise<void> {
     }
 
     saveCursors(cursors);
+
+    // Unlike the balance adapters (betterment/vanguard/fidelity), 0 rows here is a
+    // legitimate, common outcome — a cursor-based sync with no new/modified transactions
+    // since the last run — not a sign of breakage, so this does NOT throw. Logged
+    // explicitly so "0 rows written" reads as an intentional, benign observation rather
+    // than an unremarked-on gap (the did-nothing rule, CONVENTIONS.md §18).
+    runLog.info(
+      { event: 'sync.completed', rows_written: totalRowsWritten, outcome: totalRowsWritten > 0 ? 'ok' : 'no_new_transactions' },
+      'plaid sync completed',
+    );
+
     return { rowsWritten: totalRowsWritten };
   });
 }
 
 // every 4 hours per ADR 0008
 new Cron('0 */4 * * *', () => {
-  run().catch((err) => log.error({ err }, 'cron run failed'));
+  run().catch((err) => log.error({ event: 'cron.run_failed', ...errFields(err) }, 'plaid-tap cron run failed'));
 });
 log.info('plaid-tap scheduled (every 4h)');
 
-if (process.argv.includes('--run-now')) run().catch((err) => { log.error({ err }); process.exit(1); });
+if (process.argv.includes('--run-now')) {
+  run().catch((err) => {
+    log.error({ event: 'cli.run_now_failed', ...errFields(err) }, 'plaid-tap --run-now failed');
+    process.exit(1);
+  });
+}

@@ -72,7 +72,18 @@ function parseL1Response(raw: string, txs: TxToEnrich[]): L1Result[] {
   try {
     parsed = JSON.parse(jsonMatch[0]) as typeof parsed;
   } catch {
-    log.warn({ raw }, 'failed to parse L1 response');
+    // `raw` is the model's echo of a BATCH_SIZE=30 prompt built from live transaction
+    // descriptions/merchants/amounts (buildL1Prompt above) — never log it verbatim. Length
+    // and a redacted-of-dollar-amounts head are enough to tell "empty reply" from
+    // "malformed JSON" from "reply looked like prose" without risking a PII dump.
+    // `raw` is ALSO in this repo's logger.ts redact deny-list as a second line of defense.
+    log.warn(
+      {
+        raw_len: raw.length,
+        raw_head: raw.slice(0, 80).replace(/\$[\d,.]+/g, '$***'),
+      },
+      'failed to parse L1 response',
+    );
     return [];
   }
 
@@ -198,8 +209,11 @@ async function runL3Single(tx: TxToEnrich, runpod: RunpodConfig, model: string):
     });
 
     if (!res.ok) {
+      // The response body commonly echoes the request that produced it (per the RunPod
+      // OpenAI-compatible error shape), i.e. the transaction text sent in buildL3Messages
+      // above — never log it verbatim. `body` is also in logger.ts's redact deny-list.
       const body = await res.text().catch(() => '');
-      log.error({ status: res.status, body, id: tx.id }, 'L3 RunPod error');
+      log.error({ status: res.status, body_len: body.length, id: tx.id }, 'L3 RunPod error');
       return null;
     }
 

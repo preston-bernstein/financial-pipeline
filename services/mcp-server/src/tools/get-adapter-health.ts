@@ -36,7 +36,12 @@ export async function getAdapterHealth() {
     const run = bySource[source];
     const windowHours = stalenessHours[source] ?? 48;
     const lastAt = run?.completed_at ? new Date(run.completed_at) : null;
-    const stale = !lastAt || (Date.now() - lastAt.getTime()) > windowHours * 3_600_000;
+    // `stale` must also key off status, not just recency: with-run-record.ts sets
+    // completed_at on failure too, so a recently-*attempted*-but-failed run (e.g. the
+    // did-nothing-rule throw in betterment/vanguard/fidelity's adapters) previously read
+    // as fresh here even though nothing usable was written. status is surfaced separately
+    // below for callers that want the raw value; `stale` itself must mean "trust this data."
+    const stale = !lastAt || run?.status !== 'success' || (Date.now() - lastAt.getTime()) > windowHours * 3_600_000;
 
     return {
       source,

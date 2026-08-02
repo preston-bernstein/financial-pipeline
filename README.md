@@ -1,6 +1,6 @@
 # financial-pipeline
 
-Pulls bank transactions and investment balances into Postgres, classifies spending with a cascading LLM enricher, and exposes net worth, spending, and a monthly narrative journal over MCP (Model Context Protocol — the standard interface AI assistants like Claude use to call external tools).
+Pulls bank transactions and investment balances into Postgres, classifies spending with a cascading LLM enricher, and exposes net worth, spending, and a monthly narrative journal over MCP.
 
 [![CI](https://github.com/preston-bernstein/financial-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/preston-bernstein/financial-pipeline/actions/workflows/ci.yml)  [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6)](https://www.typescriptlang.org/)  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -31,7 +31,7 @@ plaid-tap              *-adapter (daily)
 
 ### Taps vs adapters
 
-Two distinct ingestion patterns, chosen per source. A **tap** reads structured API data — `plaid-tap` calls Plaid's `/transactions/sync` on a cursor, idempotent upsert on `transactions.id`, every 4 hours. An **adapter** reads an unstructured web UI via Playwright — `betterment-adapter`, `vanguard-adapter`, `fidelity-adapter` — because none of those three expose a usable read API for a personal account. Adapters require a one-time seeded session (`make seed-betterment` etc.) and run daily. See [ADR 0006](docs/adr/0006-playwright-session-seeding.md) — an ADR (Architecture Decision Record) is a short write-up explaining why one specific design choice was made; this repo has seven, listed at the end of this README.
+Two distinct ingestion patterns, chosen per source. A **tap** reads structured API data — `plaid-tap` calls Plaid's `/transactions/sync` on a cursor, idempotent upsert on `transactions.id`, every 4 hours. An **adapter** reads an unstructured web UI via Playwright — `betterment-adapter`, `vanguard-adapter`, `fidelity-adapter` — because none of those three expose a usable read API for a personal account. Adapters require a one-time seeded session (`make seed-betterment` etc.) and run daily. See [ADR 0006](docs/adr/0006-playwright-session-seeding.md); all seven ADRs are listed at the end of this README.
 
 ### Cascading enrichment
 
@@ -39,7 +39,7 @@ The LLM enricher classifies settled transactions into a closed 15-category vocab
 
 ### Materialization on write
 
-Every adapter/tap run inserts a `pending_materialization` row and fires `pg_notify('materialization_requested')`. The materializer process holds a `LISTEN` connection and re-aggregates `monthly_spending` reactively instead of polling (see [ADR 0014](docs/adr/0014-listen-notify-materializer.md)). After recomputing spending it also asks the Ollama broker to refresh the current month's `JournalEntry` — a narrative summary written using the Karpathy wiki pattern: an LLM periodically rewrites a running summary document, a technique named for AI researcher Andrej Karpathy (see [ADR 0017](docs/adr/0017-journal-wiki-pattern.md)).
+Every adapter/tap run inserts a `pending_materialization` row and fires `pg_notify('materialization_requested')`. The materializer process holds a `LISTEN` connection and re-aggregates `monthly_spending` reactively instead of polling (see [ADR 0014](docs/adr/0014-listen-notify-materializer.md)). After recomputing spending it also asks the Ollama broker to refresh the current month's `JournalEntry` — a narrative summary written using the Karpathy wiki pattern, where an LLM periodically rewrites a running summary document (see [ADR 0017](docs/adr/0017-journal-wiki-pattern.md)).
 
 ## Stack
 
@@ -47,10 +47,10 @@ Every adapter/tap run inserts a `pending_materialization` row and fires `pg_noti
 |---|---|
 | Bank data | Plaid `/transactions/sync`, cursor-based |
 | Investment data | Playwright, seeded-session scrape of Betterment/Vanguard/Fidelity |
-| DB | PostgreSQL 17, Drizzle ORM (maps Postgres tables to TypeScript types) + drizzle-kit migrations |
+| DB | PostgreSQL 17, Drizzle ORM + drizzle-kit migrations |
 | Reactive aggregation | Postgres `LISTEN`/`NOTIFY` |
 | Enrichment | Ollama resource broker (local `qwen2.5:3b`/`qwen2.5:7b`) + RunPod serverless `Qwen2.5-72B-Instruct` |
-| API | MCP server, `@modelcontextprotocol/sdk`, Streamable HTTP (MCP's plain-HTTP transport), bearer-token auth |
+| API | MCP server, `@modelcontextprotocol/sdk`, Streamable HTTP, bearer-token auth |
 | Observability | Grafana + Loki (logs/dashboards), ntfy (push alerts) |
 | Deploy | Docker Compose on NAS, images built and pushed via `make deploy` |
 

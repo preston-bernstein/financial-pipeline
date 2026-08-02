@@ -18,6 +18,8 @@ build:
 	done
 
 push: build
+	@echo "Syncing docker-compose.yml and .env.example to NAS..."
+	rsync -az docker-compose.yml .env.example $(NAS_USER)@$(NAS_HOST):$(NAS_PATH)/
 	@echo "Transferring images to NAS..."
 	docker save financial-pipeline/migrate $(addprefix financial-pipeline/,$(SERVICES)) \
 		| ssh $(NAS_USER)@$(NAS_HOST) $(DOCKER) load

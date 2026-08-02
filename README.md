@@ -124,7 +124,7 @@ Infrastructure config lives in `.env` (see [`.env.example`](.env.example)); fina
 
 ```bash
 make build    # buildx-build every service image (linux/amd64)
-make push     # save + ssh-load images onto the NAS
+make push     # sync docker-compose.yml + .env.example, then save + ssh-load images onto the NAS
 make deploy   # push, then `docker compose up -d` on the NAS
 ```
 

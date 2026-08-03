@@ -3,14 +3,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@financial-pipeline/db', () => ({
   db: { execute: vi.fn() },
 }));
+vi.mock('./auth.js', () => ({
+  loadAuthToken: vi.fn(),
+}));
 
 const { db } = await import('@financial-pipeline/db');
+const { loadAuthToken } = await import('./auth.js');
 const { renderMetrics } = await import('./metrics.js');
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
+const mockLoadAuthToken = loadAuthToken as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockLoadAuthToken.mockReturnValue('some-token');
   // Queries run in the exact order renderMetrics issues them (Promise.all evaluates the
   // array synchronously left-to-right, then one more query for work-quantity).
   mockExecute
@@ -52,6 +58,13 @@ describe('renderMetrics — payload-free Prometheus exporter', () => {
     expect(text).toContain('finpipe_materialization_backlog 2');
     expect(text).toContain('finpipe_runs_stuck_running 1');
     expect(text).toContain('finpipe_work_quantity{source="betterment"} 0');
+    expect(text).toContain('finpipe_mcp_auth_enabled 1');
+  });
+
+  it('reports finpipe_mcp_auth_enabled 0 when no auth token is configured', async () => {
+    mockLoadAuthToken.mockReturnValue(null);
+    const text = await renderMetrics();
+    expect(text).toContain('finpipe_mcp_auth_enabled 0');
   });
 
   it('carries no PII-shaped label or value — no account id, merchant, amount, or free text', async () => {

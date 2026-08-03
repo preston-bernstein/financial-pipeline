@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { db } from '@financial-pipeline/db';
+import { loadAuthToken } from './auth.js';
 
 // A payload-free Prometheus text exporter, computed straight from Postgres rather than
 // from in-process counters. Two reasons this beats instrumenting each of the six other
@@ -188,6 +189,17 @@ export async function renderMetrics(): Promise<string> {
       'finpipe_runs_stuck_running',
       'runs rows stuck in status=running for over 2 hours (orphaned by an unclean restart)',
       [{ labels: {}, value: stuckValue }],
+    ),
+    // finpipe_mcp_auth_enabled — a security POSTURE check, not a PII leak: 1 if
+    // MCP_AUTH_TOKEN (or the docker secret) is configured and /mcp is bearer-gated,
+    // 0 if the server is running open. Re-derived from the same loadAuthToken() the
+    // /mcp handler itself calls, so this series can never drift from the real
+    // enforcement state. Distinct from `up{job="financial-pipeline-mcp-server"}` —
+    // this fires even while the process is healthy and answering requests.
+    renderGauge(
+      'finpipe_mcp_auth_enabled',
+      'Whether the /mcp endpoint currently enforces bearer-token auth (1) or is running unauthenticated (0)',
+      [{ labels: {}, value: loadAuthToken() ? 1 : 0 }],
     ),
   ].join('\n\n') + '\n';
 }

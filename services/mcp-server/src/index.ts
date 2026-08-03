@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { createLogger, errFields } from '@financial-pipeline/adapter-utils';
+import { loadAuthToken } from './auth.js';
 import { renderMetrics } from './metrics.js';
 import { getMonthlySpending } from './tools/get-monthly-spending.js';
 import { getNetWorth } from './tools/get-net-worth.js';
@@ -21,13 +21,6 @@ const PORT = Number(process.env.MCP_PORT ?? 3101);
 
 // Bearer token: docker secret if mounted, else env. Without one the server is
 // unauthenticated — loud warning below, since tools expose full financial state.
-function loadAuthToken(): string | null {
-  try {
-    return readFileSync('/run/secrets/mcp_auth_token', 'utf8').trim() || null;
-  } catch {
-    return process.env.MCP_AUTH_TOKEN?.trim() || null;
-  }
-}
 const AUTH_TOKEN = loadAuthToken();
 if (!AUTH_TOKEN) {
   log.warn('no MCP_AUTH_TOKEN (or /run/secrets/mcp_auth_token) configured — mcp-server is UNAUTHENTICATED; any client that can reach the port can read financial data');
